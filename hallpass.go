@@ -1,13 +1,17 @@
+// Copyright (c) Tailscale Inc & AUTHORS
+// SPDX-License-Identifier: BSD-3-Clause
+
 // The hallpass server is a tsnet web application
 // that allows users to use request instantaneous, time-bound access, known as
 // just-in-time access, to Tailscale resources from other people in their
 // organization
-
+//
 // It is effectively the web-based version of github.com/tailscale/accessbot.
 package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	_ "embed"
@@ -28,6 +32,7 @@ import (
 	"github.com/gorilla/csrf"
 	"github.com/tailscale/setec/client/setec"
 	"tailscale.com/client/local"
+	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/client/tailscale/v2"
 	"tailscale.com/ipn"
 	"tailscale.com/tailcfg"
@@ -139,12 +144,21 @@ var indexHTML string
 // the root page. Its data is of type [rootData].
 var rootTemplate = template.Must(template.New("root").Parse(indexHTML))
 
-// rootData is is the data passed to [rootTemplate].
+// rootData is the data passed to [rootTemplate].
 type rootData struct {
 	Who         string
 	NodeName    string
-	AccessTypes []string
+	AccessTypes []accessTypeConfig
+	Durations   []durationDropdown
 	CSRF        template.HTML
+}
+
+// durationDropdown is a single option in the duration <select> dropdown on the
+// root page.
+type durationDropdown struct {
+	GoStr   string // e.g. "1h" (time.Duration.String format)
+	Label   string // e.g. "1 hour"
+	Default bool   // whether this is the default option
 }
 
 type Server struct {
@@ -160,11 +174,196 @@ type Server struct {
 // WhoIs and figuring out who they are and what types of access they can
 // request.
 type lookupInfo struct {
-	Who        string // emailish
-	NodeID     tailcfg.StableNodeID
-	NodeName   string   // MagicDNS hostname, without dot
-	AccessType []string // "pii", "admin", etc
+	Who         string // emailish
+	NodeID      tailcfg.StableNodeID
+	NodeName    string // MagicDNS hostname, without dot
+	AccessTypes accessTypes
 }
+
+// accessTypeConfig is an app grant value from the Tailscale Policy JSON.
+//
+// For example, one might write in their Tailscale config:
+/*
+	{
+		"src": [
+			"group:eng",
+			"group:analytics",
+		],
+		"dst": ["tag:hallpass"],
+		"app": {"github.com/tailscale/hallpass": [
+			{
+				"Name":    "PII",
+				"Attr":    "custom:jitToPII",
+				"Max":     "168h",
+				"Default": "1h",
+			},
+			{
+				"Name":    "Foo Access",
+				"Attr":    "custom:foo",
+				"Max":     "168h",
+				"Default": "1h",
+			},
+			{
+				"Name":    "bar",
+				"Attr":    "custom:bar",
+				"Max":     "168h",
+				"Default": "1h",
+			},
+		]},
+	},
+*/
+type accessTypeConfig struct {
+	Name    string // e.g. "PII Access" (human readable)
+	Attr    string // e.g. "custom:jitToPII" (posture attribute key)
+	Max     timeDurationString
+	Default timeDurationString
+}
+
+type accessTypes struct {
+	Types []accessTypeConfig
+}
+
+// DurationOptions returns the list of durationDropdown options
+// for use in the duration <select> dropdown on the root page.
+//
+// The options are derived from the Max and Default values
+// of the accessTypeConfigs configured.
+func (at *accessTypes) DurationOptions() (ret []durationDropdown) {
+	if len(at.Types) == 0 {
+		return nil
+	}
+	max := 0 * time.Hour
+	cands := []time.Duration{
+		30 * time.Minute,
+		1 * time.Hour,
+		2 * time.Hour,
+		4 * time.Hour,
+		8 * time.Hour,
+		12 * time.Hour,
+		24 * time.Hour,
+		48 * time.Hour,
+		72 * time.Hour,
+		168 * time.Hour,
+		168 * 2 * time.Hour,
+	}
+	for _, t := range at.Types {
+		if d := time.Duration(t.Max); d > max {
+			max = d
+			cands = append(cands, d)
+		}
+		d := time.Duration(t.Default)
+		if d > max {
+			max = d
+			cands = append(cands, d)
+		}
+		if d != 0 {
+			cands = append(cands, d)
+		}
+	}
+	slices.Sort(cands)
+	cands = slices.Compact(cands)
+	for _, d := range cands {
+		if d > max {
+			continue
+		}
+		label := ""
+		switch {
+		case d.Hours() >= 24 && d%24 == 0:
+			days := int(d.Hours() / 24)
+			if days == 1 {
+				label = "1 day"
+			} else {
+				label = fmt.Sprintf("%d days", days)
+			}
+		case d.Hours() >= 1:
+			hours := int(d.Hours())
+			if hours == 1 {
+				label = "1 hour"
+			} else {
+				label = fmt.Sprintf("%d hours", hours)
+			}
+		default:
+			mins := int(d.Minutes())
+			if mins == 1 {
+				label = "1 minute"
+			} else {
+				label = fmt.Sprintf("%d minutes", mins)
+			}
+		}
+		ret = append(ret, durationDropdown{
+			GoStr:   d.String(),
+			Label:   label,
+			Default: d == time.Duration(at.Types[0].Default),
+		})
+	}
+	return ret
+}
+
+func parseAccessTypes(who *apitype.WhoIsResponse) (accessTypes, error) {
+	if who == nil {
+		return accessTypes{}, errors.New("nil WhoIsResponse")
+	}
+	capMap := who.CapMap
+	var zero accessTypes
+	var ret accessTypes
+
+	var types []accessTypeConfig
+	sawKey := map[string]bool{}
+	for _, rawJSON := range capMap[grantApp] {
+		var atc accessTypeConfig
+		if err := json.Unmarshal([]byte(rawJSON), &atc); err != nil {
+			return zero, fmt.Errorf("unmarshal accessTypeConfig %#q: %w", rawJSON, err)
+		}
+		if atc.Name == "" {
+			return zero, fmt.Errorf("missing Name attribute in accessTypeConfig %#q", rawJSON)
+		}
+		if atc.Attr == "" {
+			return zero, fmt.Errorf("missing Attr attribute in accessTypeConfig %#q", rawJSON)
+		}
+		if sawKey[atc.Attr] {
+			log.Printf("ignoring duplicate accessTypeConfig %q for %v", atc.Attr, who.UserProfile.LoginName)
+			continue
+		}
+		sawKey[atc.Attr] = true
+		types = append(types, atc)
+	}
+
+	ret.Types = types
+	return ret, nil
+}
+
+// ByAttr returns the accessTypeConfig for the given attribute key,
+// and whether it was found.
+func (t *accessTypes) ByAttr(key string) (_ accessTypeConfig, ok bool) {
+	var zero accessTypeConfig
+	for _, at := range t.Types {
+		if at.Attr == key {
+			return at, true
+		}
+	}
+	return zero, false
+}
+
+type timeDurationString time.Duration
+
+func (tds *timeDurationString) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	*tds = timeDurationString(d)
+	return nil
+}
+
+func (tds timeDurationString) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(tds).String())
+}
+
+const grantApp = "github.com/tailscale/hallpass"
 
 func (s *Server) lookup(r *http.Request) (ret lookupInfo, err error) {
 	who, err := s.localClient.WhoIs(r.Context(), r.RemoteAddr)
@@ -175,8 +374,10 @@ func (s *Server) lookup(r *http.Request) (ret lookupInfo, err error) {
 	ret.NodeID = who.Node.StableID
 	ret.NodeName = who.Node.ComputedName
 	ret.NodeName, _, _ = strings.Cut(ret.NodeName, ".")
-
-	ret.AccessType = []string{"pii", "admin"} // TODO: get from capmap
+	ret.AccessTypes, err = parseAccessTypes(who)
+	if err != nil {
+		return ret, fmt.Errorf("parseAccessTypes: %v", err)
+	}
 	return ret, nil
 }
 
@@ -194,13 +395,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rootTemplate.Execute(w, rootData{
-			CSRF:     csrf.TemplateField(r),
-			Who:      li.Who,
-			NodeName: li.NodeName,
-			AccessTypes: []string{
-				"pii",
-				"admin",
-			},
+			CSRF:        csrf.TemplateField(r),
+			Who:         li.Who,
+			NodeName:    li.NodeName,
+			AccessTypes: li.AccessTypes.Types,
+			Durations:   li.AccessTypes.DurationOptions(),
 		})
 	case "/request":
 		if r.Method != "POST" {
@@ -229,8 +428,8 @@ func (s *Server) serveAccessPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "lookup: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	typ := r.FormValue("accessType")
-	if typ == "" {
+	attr := r.FormValue("accessType")
+	if attr == "" {
 		http.Error(w, "accessType required", http.StatusBadRequest)
 		return
 	}
@@ -251,20 +450,15 @@ func (s *Server) serveAccessPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: get this from capmap, not hard-coded
-	var attrKey string
-	if typ == "pii" {
-		attrKey = "custom:jitToPII"
-	} else {
-		http.Error(w, "TODO: get this from capmap", http.StatusBadRequest)
+	if _, ok := li.AccessTypes.ByAttr(attr); !ok {
+		http.Error(w, "unknown accessType "+attr, http.StatusBadRequest)
 		return
 	}
 
 	req := authorizeRequest{
-		AccessType: typ,
-		AttrKey:    attrKey,
-		Reason:     r.FormValue("reason"),
-		Duration:   dur,
+		AttrKey:  attr,
+		Reason:   r.FormValue("reason"),
+		Duration: dur,
 	}
 
 	if err := s.authorize(r.Context(), li, req); err != nil {
@@ -280,10 +474,9 @@ func (s *Server) serveAccessPost(w http.ResponseWriter, r *http.Request) {
 
 // authorizeRequest are the parameters to [Server.authorize].
 type authorizeRequest struct {
-	AccessType string        // "pii", "admin", etc (used in Slack notification)
-	AttrKey    string        // "custom:jitToPII", etc (used in SetPostureAttribute)
-	Reason     string        // user-provided reason
-	Duration   time.Duration // duration of access
+	AttrKey  string        // "custom:jitToPII", etc (used in SetPostureAttribute)
+	Reason   string        // user-provided reason
+	Duration time.Duration // duration of access
 }
 
 // authorize sets the posture attribute on the device, and sends a Slack notification.
@@ -291,17 +484,19 @@ func (s *Server) authorize(ctx context.Context, li lookupInfo, req authorizeRequ
 	if req.AttrKey == "" {
 		return fmt.Errorf("missing AttrKey")
 	}
-	if req.AccessType == "" {
-		return fmt.Errorf("missing AccessType")
-	}
 	if req.Reason == "" {
 		return fmt.Errorf("missing Reason")
 	}
-	if req.Duration <= 0 || req.Duration > 24*time.Hour {
+	if req.Duration <= 0 {
 		return fmt.Errorf("invalid Duration")
 	}
-	if !slices.Contains(li.AccessType, req.AccessType) {
-		return fmt.Errorf("user %q not allowed to request access type %q", li.Who, req.AccessType)
+	at, ok := li.AccessTypes.ByAttr(req.AttrKey)
+	if !ok {
+		return fmt.Errorf("user %q not allowed to request access key %q", li.Who, req.AttrKey)
+	}
+	maxDur := cmp.Or(time.Duration(at.Max), 24*time.Hour)
+	if req.Duration > maxDur {
+		return fmt.Errorf("requested duration %v exceeds max %v for access type %q", req.Duration, maxDur, at.Name)
 	}
 
 	log.Printf("Authorizing %+v", req)
@@ -317,7 +512,7 @@ func (s *Server) authorize(ctx context.Context, li lookupInfo, req authorizeRequ
 		Who:            li.Who,
 		NodeID:         li.NodeID,
 		NodeName:       li.NodeName,
-		AccessType:     req.AccessType,
+		AccessType:     at.Name,
 		AccessDuration: req.Duration.String(),
 		Reason:         req.Reason,
 	}); err != nil {
@@ -330,7 +525,7 @@ type SlackNotification struct {
 	Who            string               `json:"who"`            // "foo@example.com"
 	NodeID         tailcfg.StableNodeID `json:"nodeID"`         // stable nodeID
 	NodeName       string               `json:"nodeName"`       // MagicDNS hostname, without dot
-	AccessType     string               `json:"accessType"`     // "pii", "admin", etc
+	AccessType     string               `json:"accessType"`     // human-readable access name
 	AccessDuration string               `json:"accessDuration"` // duration of access; time.Duration.String format
 	Reason         string               `json:"reason"`         // user-provided reason
 }
