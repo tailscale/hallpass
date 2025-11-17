@@ -1,3 +1,9 @@
+// The hallpass server is a tsnet web application
+// that allows users to use request instantaneous, time-bound access, known as
+// just-in-time access, to Tailscale resources from other people in their
+// organization
+
+// It is effectively the web-based version of github.com/tailscale/accessbot.
 package main
 
 import (
@@ -30,15 +36,15 @@ import (
 
 var (
 	secretServer  = flag.String("secret-server", "", "setec secret server base URL; if empty, setec is not used")
-	oauthSecret   = flag.String("oauth-secret", keyPath("jitweb-key"), "name of setec secret containing Tailscale OAuth ClientSecret; if --secret-server is empty, ignored and reads from $HOME/keys/jitweb-key")
-	webhookSecret = flag.String("webhook-secret", keyPath("jitweb-webhook"), "name of setec secret containing the Slack webhook URL; if --secret-server is empty, ignored and reads from $HOME/keys/jitweb-webhook")
+	oauthSecret   = flag.String("oauth-secret", keyPath("hallpass-key"), "name of setec secret containing Tailscale OAuth ClientSecret; if --secret-server is empty, ignored and reads from $HOME/keys/hallpass-key")
+	webhookSecret = flag.String("webhook-secret", keyPath("hallpass-webhook"), "name of setec secret containing the Slack webhook URL; if --secret-server is empty, ignored and reads from $HOME/keys/hallpass-webhook")
 )
 
 func main() {
 	flag.Parse()
 
 	ts := &tsnet.Server{
-		Hostname: "jit",
+		Hostname: "hallpass",
 	}
 	js := &Server{ts: ts}
 	if err := ts.Start(); err != nil {

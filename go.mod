@@ -1,4 +1,4 @@
-module github.com/tailscale/jitweb
+module github.com/tailscale/hallpass
 
 go 1.25.1
 
