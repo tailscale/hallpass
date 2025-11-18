@@ -107,8 +107,8 @@ func main() {
 			log.Fatalf("failed to create setec store: %v", err)
 		}
 		defer ss.Close()
-		js.oauthClientSecret = ss.Secret(*oauthSecret)
-		js.webhookURL = ss.Secret(*webhookSecret)
+		js.oauthClientSecret = whitespaceTrimmingSecret(ss.Secret(*oauthSecret))
+		js.webhookURL = whitespaceTrimmingSecret(ss.Secret(*webhookSecret))
 	} else {
 		log.Printf("Using secrets from disk")
 		js.oauthClientSecret = setec.StaticSecret(readFile(*oauthSecret))
@@ -130,6 +130,10 @@ func main() {
 
 	log.Printf("Serving at http://%s ...", js.fqdn)
 	log.Fatal(http.Serve(ln, protect(js)))
+}
+
+func whitespaceTrimmingSecret(s setec.Secret) setec.Secret {
+	return func() []byte { return bytes.TrimSpace(s()) }
 }
 
 func keyPath(name string) string {
