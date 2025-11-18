@@ -1,4 +1,6 @@
-# jitweb
+# Hallpass
+
+**Warning:** work-in-progress. Do not use.
 
 This is a Just-in-Time (JIT) access request web app. It's like
 https://github.com/tailscale/accessbot but without the Slack bit and
