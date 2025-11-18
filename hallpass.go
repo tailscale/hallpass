@@ -47,6 +47,9 @@ var (
 
 func main() {
 	flag.Parse()
+	if flag.NArg() != 0 {
+		log.Fatalf("usage: hallpass [flags]")
+	}
 
 	ts := &tsnet.Server{
 		Hostname: "hallpass",
@@ -87,6 +90,7 @@ func main() {
 	log.Printf("Hostname is %s, IPs %v", js.fqdn, st.TailscaleIPs)
 
 	if *secretServer != "" {
+		log.Printf("Using setec secrets from %q", *secretServer)
 		ss, err := setec.NewStore(context.Background(), setec.StoreConfig{
 			Client: setec.Client{
 				Server: *secretServer,
@@ -103,11 +107,10 @@ func main() {
 		defer ss.Close()
 		js.oauthClientSecret = ss.Secret(*oauthSecret)
 		js.webhookURL = ss.Secret(*webhookSecret)
-		log.Printf("Using setec secrets from %q", *secretServer)
 	} else {
+		log.Printf("Using secrets from disk")
 		js.oauthClientSecret = setec.StaticSecret(readFile(*oauthSecret))
 		js.webhookURL = setec.StaticSecret(readFile(*webhookSecret))
-		log.Printf("Using secrets from disk")
 	}
 
 	ln, err := ts.Listen("tcp", ":80")
