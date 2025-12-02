@@ -10,7 +10,6 @@
 {{if .AccessTypes}}
 <p>You can request access to:</p>
 <form method="post" action="/request">
-    {{ .CSRF }}
     <p>Type: <select name="accessType">
     {{range .AccessTypes}}
         <option value="{{.Attr}}">{{.Name}}</option>

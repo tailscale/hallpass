@@ -3,7 +3,6 @@ module github.com/tailscale/hallpass
 go 1.25.1
 
 require (
-	github.com/gorilla/csrf v1.7.3
 	github.com/tailscale/setec v0.0.0-20250916214228-71d9e0b5aae2
 	tailscale.com v1.88.3
 	tailscale.com/client/tailscale/v2 v2.2.0
@@ -42,7 +41,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/nftables v0.2.1-0.20240414091927-5e242ec57806 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/hdevalence/ed25519consensus v0.2.0 // indirect
 	github.com/illarion/gonotify/v3 v3.0.2 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect

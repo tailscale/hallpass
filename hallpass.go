@@ -13,7 +13,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/rand"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -29,7 +28,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/csrf"
 	"github.com/tailscale/setec/client/setec"
 	"tailscale.com/client/local"
 	"tailscale.com/client/tailscale/apitype"
@@ -44,6 +42,7 @@ var (
 	oauthSecret   = flag.String("oauth-secret", keyPath("hallpass-key"), "name of setec secret containing Tailscale OAuth ClientSecret; if --secret-server is empty, ignored and reads from $HOME/keys/hallpass-key")
 	webhookSecret = flag.String("webhook-secret", keyPath("hallpass-webhook"), "name of setec secret containing the Slack webhook URL; if --secret-server is empty, ignored and reads from $HOME/keys/hallpass-webhook")
 	configDir     = flag.String("tsnet-dir", "", "tsnet server directory; if empty, tsnet uses an automatic config directory based on the binary name")
+	tls           = flag.Bool("tls", true, "serve over TLS using Tailscale Serve")
 )
 
 func main() {
@@ -115,21 +114,39 @@ func main() {
 		js.webhookURL = setec.StaticSecret(readFile(*webhookSecret))
 	}
 
-	ln, err := ts.Listen("tcp", ":80")
-	if err != nil {
-		log.Fatal(err)
+	if *tls {
+		go func() {
+			lnHTTP, err := ts.Listen("tcp", ":80")
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer lnHTTP.Close()
+			log.Printf("Serving at http://%s ...", js.fqdn)
+			log.Fatal(http.Serve(lnHTTP, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "https://"+js.fqdn, http.StatusPermanentRedirect)
+			})))
+		}()
+
+		lnHTTPS, err := ts.ListenTLS("tcp", ":443")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer lnHTTPS.Close()
+		csrf := http.NewCrossOriginProtection()
+		csrf.AddTrustedOrigin("https://" + js.fqdn)
+		log.Printf("Serving at https://%s ...", js.fqdn)
+		log.Fatal(http.Serve(lnHTTPS, csrf.Handler(js)))
+	} else {
+		lnHTTP, err := ts.Listen("tcp", ":80")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer lnHTTP.Close()
+		csrf := http.NewCrossOriginProtection()
+		csrf.AddTrustedOrigin("http://" + js.fqdn)
+		log.Printf("Serving at http://%s ...", js.fqdn)
+		log.Fatal(http.Serve(lnHTTP, csrf.Handler(js)))
 	}
-	defer ln.Close()
-
-	// CSRF protection
-	csrfSecret := make([]byte, 32)
-	rand.Read(csrfSecret)
-	protect := csrf.Protect(csrfSecret,
-		csrf.Secure(false),
-		csrf.TrustedOrigins([]string{"jit.corp.ts.net"}))
-
-	log.Printf("Serving at http://%s ...", js.fqdn)
-	log.Fatal(http.Serve(ln, protect(js)))
 }
 
 func whitespaceTrimmingSecret(s setec.Secret) setec.Secret {
@@ -159,7 +176,6 @@ type rootData struct {
 	NodeName    string
 	AccessTypes []accessTypeConfig
 	Durations   []durationDropdown
-	CSRF        template.HTML
 }
 
 // durationDropdown is a single option in the duration <select> dropdown on the
@@ -404,7 +420,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rootTemplate.Execute(w, rootData{
-			CSRF:        csrf.TemplateField(r),
 			Who:         li.Who,
 			NodeName:    li.NodeName,
 			AccessTypes: li.AccessTypes.Types,
