@@ -242,6 +242,7 @@ type accessTypeConfig struct {
 	Attr    string // e.g. "custom:jitToPII" (posture attribute key)
 	Max     timeDurationString
 	Default timeDurationString
+	Silent  bool // when true, skip Slack notifications for access requests
 }
 
 type accessTypes struct {
@@ -532,15 +533,17 @@ func (s *Server) authorize(ctx context.Context, li lookupInfo, req authorizeRequ
 	if err != nil {
 		return fmt.Errorf("SetPostureAttribute: %v", err)
 	}
-	if err := SendSlack(ctx, string(s.webhookURL()), SlackNotification{
-		Who:            li.Who,
-		NodeID:         li.NodeID,
-		NodeName:       li.NodeName,
-		AccessType:     at.Name,
-		AccessDuration: req.Duration.String(),
-		Reason:         req.Reason,
-	}); err != nil {
-		return fmt.Errorf("SendSlack: %v", err)
+	if !at.Silent {
+		if err := SendSlack(ctx, string(s.webhookURL()), SlackNotification{
+			Who:            li.Who,
+			NodeID:         li.NodeID,
+			NodeName:       li.NodeName,
+			AccessType:     at.Name,
+			AccessDuration: req.Duration.String(),
+			Reason:         req.Reason,
+		}); err != nil {
+			return fmt.Errorf("SendSlack: %v", err)
+		}
 	}
 	return nil
 }
