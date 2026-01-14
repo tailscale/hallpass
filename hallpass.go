@@ -43,6 +43,7 @@ var (
 	webhookSecret = flag.String("webhook-secret", keyPath("hallpass-webhook"), "name of setec secret containing the Slack webhook URL; if --secret-server is empty, ignored and reads from $HOME/keys/hallpass-webhook")
 	configDir     = flag.String("tsnet-dir", "", "tsnet server directory; if empty, tsnet uses an automatic config directory based on the binary name")
 	tls           = flag.Bool("tls", true, "serve over TLS using Tailscale Serve")
+	loginServer   = flag.String("login-server", "", "optional alternate URL of control server")
 )
 
 func main() {
@@ -52,8 +53,9 @@ func main() {
 	}
 
 	ts := &tsnet.Server{
-		Hostname: "hallpass",
-		Dir:      *configDir,
+		Hostname:   "hallpass",
+		Dir:        *configDir,
+		ControlURL: *loginServer,
 	}
 	js := &Server{ts: ts}
 	if err := ts.Start(); err != nil {
