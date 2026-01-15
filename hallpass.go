@@ -445,6 +445,7 @@ func (s *Server) tsClient() *tailscale.Client {
 	conf := tailscale.OAuthConfig{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
+		BaseURL:      s.ts.ControlURL,
 	}
 	return &tailscale.Client{HTTP: conf.HTTPClient()}
 }
