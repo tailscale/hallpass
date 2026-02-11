@@ -9,4 +9,7 @@ instead being a webserver.
 It's a [`tsnet`](https://tailscale.com/kb/1244/tsnet) webserver, so it
 knows who you are already and which device you want access for.
 
-It gets its secrets from [setec](https://github.com/tailscale/setec/).
+It gets its secrets from [setec](https://github.com/tailscale/setec/), or from
+local files. Optionally, it uses [workload
+identity](https://tailscale.com/docs/features/workload-identity-federation) to
+authenticate to the Tailscale API.

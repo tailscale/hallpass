@@ -36,12 +36,15 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
+	"tailscale.com/wif"
 )
 
 var (
 	secretServer  = flag.String("secret-server", "", "setec secret server base URL; if empty, setec is not used")
-	oauthSecret   = flag.String("oauth-secret", keyPath("hallpass-key"), "name of setec secret containing Tailscale OAuth ClientSecret; if --secret-server is empty, ignored and reads from $HOME/keys/hallpass-key")
+	oauthSecret   = flag.String("oauth-secret", keyPath("hallpass-key"), "name of setec secret containing Tailscale OAuth ClientSecret; if --secret-server is empty, ignored and reads from $HOME/keys/hallpass-key; ignored if workload identity federation is used")
 	webhookSecret = flag.String("webhook-secret", keyPath("hallpass-webhook"), "name of setec secret containing the Slack webhook URL; if --secret-server is empty, ignored and reads from $HOME/keys/hallpass-webhook")
+	wifClientID   = flag.String("wif-client-id", "", "Tailscale OAuth client ID, if using Workload Identity Federation instead of --oauth-secret")
+	wifAudience   = flag.String("wif-audience", "", "OAuth audience, if using Workload Identity Federation instead of --oauth-secret")
 	configDir     = flag.String("tsnet-dir", "", "tsnet server directory; if empty, tsnet uses an automatic config directory based on the binary name")
 	tls           = flag.Bool("tls", true, "serve over TLS using Tailscale Serve")
 	loginServer   = flag.String("login-server", "", "optional alternate URL of the control login server")
@@ -75,8 +78,10 @@ func main() {
 		ControlURL: *loginServer,
 	}
 	js := &Server{
-		ts:     ts,
-		apiURL: apiURL,
+		ts:          ts,
+		apiURL:      apiURL,
+		wifClientID: *wifClientID,
+		wifAudience: *wifAudience,
 	}
 	if err := ts.Start(); err != nil {
 		log.Fatal(err)
@@ -114,25 +119,32 @@ func main() {
 
 	if *secretServer != "" {
 		log.Printf("Using setec secrets from %q", *secretServer)
+		secrets := []string{
+			*webhookSecret,
+		}
+		if *oauthSecret != "" {
+			secrets = append(secrets, *oauthSecret)
+		}
 		ss, err := setec.NewStore(context.Background(), setec.StoreConfig{
 			Client: setec.Client{
 				Server: *secretServer,
 				DoHTTP: ts.HTTPClient().Do,
 			},
-			Secrets: []string{
-				*oauthSecret,
-				*webhookSecret,
-			},
+			Secrets: secrets,
 		})
 		if err != nil {
 			log.Fatalf("failed to create setec store: %v", err)
 		}
 		defer ss.Close()
-		js.oauthClientSecret = whitespaceTrimmingSecret(ss.Secret(*oauthSecret))
+		if *oauthSecret != "" {
+			js.oauthClientSecret = whitespaceTrimmingSecret(ss.Secret(*oauthSecret))
+		}
 		js.webhookURL = whitespaceTrimmingSecret(ss.Secret(*webhookSecret))
 	} else {
 		log.Printf("Using secrets from disk")
-		js.oauthClientSecret = setec.StaticSecret(readFile(*oauthSecret))
+		if *oauthSecret != "" {
+			js.oauthClientSecret = setec.StaticSecret(readFile(*oauthSecret))
+		}
 		js.webhookURL = setec.StaticSecret(readFile(*webhookSecret))
 	}
 
@@ -214,8 +226,12 @@ type Server struct {
 	apiURL      *url.URL
 	fqdn        string // e.g. "jit.foo.ts.net" without trailing dot
 
-	webhookURL        setec.Secret
+	webhookURL setec.Secret
+
 	oauthClientSecret setec.Secret
+
+	wifClientID string
+	wifAudience string
 }
 
 // lookupInfo is the result of looking up the user's request against tailscaled
@@ -461,16 +477,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) tsClient() *tailscale.Client {
-	clientSecret := string(s.oauthClientSecret())
-	clientID, _, _ := strings.Cut(strings.TrimPrefix(clientSecret, "tskey-client-"), "-")
-	conf := tailscale.OAuthConfig{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		BaseURL:      s.apiURL.String(),
-	}
-	return &tailscale.Client{
-		HTTP:    conf.HTTPClient(),
-		BaseURL: s.apiURL,
+	if s.oauthClientSecret != nil {
+		clientSecret := string(s.oauthClientSecret())
+		clientID, _, _ := strings.Cut(strings.TrimPrefix(clientSecret, "tskey-client-"), "-")
+		conf := tailscale.OAuthConfig{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			BaseURL:      s.apiURL.String(),
+		}
+		return &tailscale.Client{
+			HTTP:    conf.HTTPClient(),
+			BaseURL: s.apiURL,
+		}
+	} else {
+		return &tailscale.Client{
+			BaseURL: s.apiURL,
+			Auth: &tailscale.IdentityFederation{
+				ClientID: s.wifClientID,
+				IDTokenFunc: func() (string, error) {
+					return wif.ObtainProviderToken(context.Background(), s.wifAudience)
+				},
+			},
+		}
 	}
 }
 
