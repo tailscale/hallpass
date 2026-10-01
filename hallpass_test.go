@@ -8,12 +8,52 @@ import (
 	"io"
 	"log"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
+
+func TestDurationOptionsCap(t *testing.T) {
+	at := &accessTypes{
+		Types: []accessTypeConfig{{
+			Name:    "Short",
+			Attr:    "custom:short",
+			Max:     timeDurationString(15 * time.Minute),
+			Default: timeDurationString(15 * time.Minute),
+		}, {
+			Name:    "Long",
+			Attr:    "custom:long",
+			Max:     timeDurationString(168 * time.Hour),
+			Default: timeDurationString(1 * time.Hour),
+		}},
+	}
+	var got []time.Duration
+	for _, opt := range at.DurationOptions() {
+		d, err := time.ParseDuration(opt.GoStr)
+		if err != nil {
+			t.Fatalf("parsing option %q: %v", opt.GoStr, err)
+		}
+		if d > MaxTTL {
+			t.Errorf("option %v exceeds MaxTTL %v", d, MaxTTL)
+		}
+		got = append(got, d)
+	}
+	want := []time.Duration{
+		15 * time.Minute,
+		30 * time.Minute,
+		1 * time.Hour,
+		2 * time.Hour,
+		4 * time.Hour,
+		8 * time.Hour,
+		12 * time.Hour,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("DurationOptions() durations = %v, want %v", got, want)
+	}
+}
 
 func TestParseAccessTypeConfig(t *testing.T) {
 	defer log.SetOutput(log.Default().Writer())

@@ -330,6 +330,9 @@ func (at *accessTypes) DurationOptions() (ret []durationDropdown) {
 			cands = append(cands, d)
 		}
 	}
+	// why: never offer a duration above the absolute MaxTTL cap, even if a
+	// per-access-type Max is configured higher.
+	max = min(max, MaxTTL)
 	slices.Sort(cands)
 	cands = slices.Compact(cands)
 	for _, d := range cands {
@@ -434,6 +437,10 @@ func (tds timeDurationString) MarshalJSON() ([]byte, error) {
 }
 
 const grantApp = "github.com/tailscale/hallpass"
+
+// MaxTTL is the absolute maximum duration any hallpass access grant may be
+// issued for, regardless of per-access-type Max configuration.
+const MaxTTL = 12 * time.Hour
 
 func (s *Server) lookup(r *http.Request) (ret lookupInfo, err error) {
 	who, err := s.localClient.WhoIs(r.Context(), r.RemoteAddr)
@@ -579,7 +586,7 @@ func (s *Server) authorize(ctx context.Context, li lookupInfo, req authorizeRequ
 	if !ok {
 		return fmt.Errorf("user %q not allowed to request access key %q", li.Who, req.AttrKey)
 	}
-	maxDur := cmp.Or(time.Duration(at.Max), 24*time.Hour)
+	maxDur := min(cmp.Or(time.Duration(at.Max), MaxTTL), MaxTTL)
 	if req.Duration > maxDur {
 		return fmt.Errorf("requested duration %v exceeds max %v for access type %q", req.Duration, maxDur, at.Name)
 	}
