@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -205,6 +206,18 @@ func keyPath(name string) string {
 //go:embed index.tmpl.html
 var indexHTML string
 
+//go:embed style.css
+var css string
+
+var (
+	cssHash    = shaHash(css)
+	cssModTime = time.Now()
+)
+
+func shaHash(s string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(s)))
+}
+
 // rootTemplate is the parsed version of indexHTML serving
 // the root page. Its data is of type [rootData].
 var rootTemplate = template.Must(template.New("root").Parse(indexHTML))
@@ -215,6 +228,7 @@ type rootData struct {
 	NodeName    string
 	AccessTypes []accessTypeConfig
 	Durations   []durationDropdown
+	CSSHash     string
 }
 
 // durationDropdown is a single option in the duration <select> dropdown on the
@@ -478,7 +492,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			NodeName:    li.NodeName,
 			AccessTypes: li.AccessTypes.Types,
 			Durations:   li.AccessTypes.DurationOptions(),
+			CSSHash:     cssHash,
 		})
+	case "/style.css":
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		if r.URL.Query().Get("h") == cssHash {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		}
+		http.ServeContent(w, r, "style.css", cssModTime, strings.NewReader(css))
 	case "/request":
 		if r.Method != "POST" {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
