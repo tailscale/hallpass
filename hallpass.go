@@ -209,9 +209,14 @@ var indexHTML string
 //go:embed style.css
 var css string
 
+//go:embed script.js
+var js string
+
 var (
 	cssHash    = shaHash(css)
+	jsHash     = shaHash(js)
 	cssModTime = time.Now()
+	jsModTime  = time.Now()
 )
 
 func shaHash(s string) string {
@@ -229,14 +234,16 @@ type rootData struct {
 	AccessTypes []accessTypeConfig
 	Durations   []durationDropdown
 	CSSHash     string
+	JSHash      string
 }
 
 // durationDropdown is a single option in the duration <select> dropdown on the
 // root page.
 type durationDropdown struct {
-	GoStr   string // e.g. "1h" (time.Duration.String format)
-	Label   string // e.g. "1 hour"
-	Default bool   // whether this is the default option
+	GoStr        string // e.g. "1h" (time.Duration.String format)
+	Label        string // e.g. "1 hour"
+	Default      bool   // whether this is the default option
+	Milliseconds int64  // duration in milliseconds
 }
 
 type Server struct {
@@ -299,10 +306,17 @@ type lookupInfo struct {
 type accessTypeConfig struct {
 	Name    string // e.g. "PII Access" (human readable)
 	Attr    string // e.g. "custom:jitToPII" (posture attribute key)
-	Desc    string // optional description from ACL grant
+	Desc    string // optional description; if empty, defaults are used
 	Max     timeDurationString
 	Default timeDurationString
 	Silent  bool // when true, skip Slack notifications for access requests
+}
+
+// Description returns the description for this access type.
+// If Desc is set in the ACL grant, it is used; otherwise a default is returned.
+// MaxMilliseconds returns the Max duration in milliseconds.
+func (a accessTypeConfig) MaxMilliseconds() int64 {
+	return time.Duration(a.Max).Milliseconds()
 }
 
 type accessTypes struct {
@@ -380,9 +394,10 @@ func (at *accessTypes) DurationOptions() (ret []durationDropdown) {
 			}
 		}
 		ret = append(ret, durationDropdown{
-			GoStr:   d.String(),
-			Label:   label,
-			Default: d == time.Duration(at.Types[0].Default),
+			GoStr:        d.String(),
+			Label:        label,
+			Default:      d == time.Duration(at.Types[0].Default),
+			Milliseconds: d.Milliseconds(),
 		})
 	}
 	return ret
@@ -452,6 +467,10 @@ func (tds timeDurationString) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Duration(tds).String())
 }
 
+func (tds timeDurationString) String() string {
+	return time.Duration(tds).String()
+}
+
 const grantApp = "github.com/tailscale/hallpass"
 
 // MaxTTL is the absolute maximum duration any hallpass access grant may be
@@ -493,6 +512,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			AccessTypes: li.AccessTypes.Types,
 			Durations:   li.AccessTypes.DurationOptions(),
 			CSSHash:     cssHash,
+			JSHash:      jsHash,
 		})
 	case "/style.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -502,6 +522,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		}
 		http.ServeContent(w, r, "style.css", cssModTime, strings.NewReader(css))
+	case "/script.js":
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		if r.URL.Query().Get("h") == jsHash {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		}
+		http.ServeContent(w, r, "script.js", jsModTime, strings.NewReader(js))
 	case "/request":
 		if r.Method != "POST" {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
