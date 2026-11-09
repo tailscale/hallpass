@@ -1,36 +1,61 @@
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-<title>Tailscale JIT access</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tailscale JIT Access</title>
+<link rel="stylesheet" href="/style.css?h={{.CSSHash}}">
 </head>
 <body>
-<h1>Tailscale JIT access</h1>
+<div class="container">
+  <h1>Tailscale JIT Access</h1>
+  <p class="subtitle">You are <strong>{{.Who}}</strong> using <strong>{{.NodeName}}</strong>.</p>
 
-<p>You are <b>{{.Who}}</b> using <b>{{.NodeName}}</b>.</p>
+  {{if .AccessTypes}}
+  <form method="post" action="/request">
+    <div class="card">
+      <div class="form-section">
+        <label class="section-label">Access Type</label>
+        <div class="radio-group">
+          {{range $index, $access := .AccessTypes}}
+          <label class="radio-option">
+            <input type="radio" name="accessType" value="{{$access.Attr}}" {{if eq $index 0}}checked{{end}} required>
+            <span class="radio-custom"></span>
+            <div class="radio-content">
+              <div class="radio-title">{{$access.Name}}</div>
+              {{if $access.Desc}}<p class="radio-description">{{$access.Desc}}</p>{{end}}
+              <p class="radio-description"><code>{{$access.Attr}}</code></p>
+            </div>
+          </label>
+          {{end}}
+        </div>
+      </div>
 
-{{if .AccessTypes}}
-<p>You can request access to:</p>
-<form method="post" action="/request">
-    <p>Type: <select name="accessType">
-    {{range .AccessTypes}}
-        <option value="{{.Attr}}">{{.Name}}</option>
-    {{end}}
-    </select> for
-    <select name="duration">
-        {{range .Durations}}
-          <option value="{{.GoStr}}" {{if .Default}}selected{{end}}>{{.Label}}</option>
-        {{end}}
-    </select>
-    </p>
-    <p>
-        Your rationale: <input type="text" name="reason" size="40" autofocus>
-    </p>
-    <p>
-        <input type="submit" value="Request Access">
-    </p>
-</form>
-{{else}}
+      <div class="form-section">
+        <label class="section-label" for="reason">Rationale</label>
+        <input type="text" id="reason" name="reason" class="text-input" placeholder="Why do you need this access?" autofocus required>
+      </div>
+
+      <div class="form-section">
+        <label class="section-label" for="duration">Duration</label>
+        <div class="select-wrapper">
+          <select name="duration" id="duration" required>
+            {{range .Durations}}
+            <option value="{{.GoStr}}" {{if .Default}}selected{{end}}>{{.Label}}</option>
+            {{end}}
+          </select>
+        </div>
+      </div>
+
+      <button type="submit" class="submit-button">Request Access</button>
+    </div>
+  </form>
+  {{else}}
+  <div class="card empty-state">
     <p>No access types configured or available.</p>
-{{end}}
+  </div>
+  {{end}}
+</div>
 
 </body>
 </html>
