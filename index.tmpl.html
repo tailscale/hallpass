@@ -11,6 +11,12 @@
   <h1>Tailscale JIT Access</h1>
   <p class="subtitle">You are <strong>{{.Who}}</strong> using <strong>{{.NodeName}}</strong>.</p>
 
+  {{if .UnknownAttrError}}
+  <div class="alert alert-warning">
+    <strong>Warning:</strong> {{.UnknownAttrError}}
+  </div>
+  {{end}}
+
   {{if .AccessTypes}}
   <form method="post" action="/request">
     <div class="card">
@@ -19,7 +25,7 @@
         <div class="radio-group">
           {{range $index, $access := .AccessTypes}}
           <label class="radio-option">
-            <input type="radio" name="accessType" value="{{$access.Attr}}" data-max-ms="{{$access.MaxMilliseconds}}" {{if eq $index 0}}checked{{end}} required>
+            <input type="radio" name="accessType" value="{{$access.Attr}}" data-max-ms="{{$access.MaxMilliseconds}}" {{if or (and (eq $.DefaultAttr "") (eq $index 0)) (eq $.DefaultAttr $access.Attr)}}checked{{end}} required>
             <span class="radio-custom"></span>
             <div class="radio-content">
               <div class="radio-title">{{$access.Name}}</div>

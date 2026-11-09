@@ -229,12 +229,14 @@ var rootTemplate = template.Must(template.New("root").Parse(indexHTML))
 
 // rootData is the data passed to [rootTemplate].
 type rootData struct {
-	Who         string
-	NodeName    string
-	AccessTypes []accessTypeConfig
-	Durations   []durationDropdown
-	CSSHash     string
-	JSHash      string
+	Who              string
+	NodeName         string
+	AccessTypes      []accessTypeConfig
+	Durations        []durationDropdown
+	CSSHash          string
+	JSHash           string
+	DefaultAttr      string // attribute to select by default (from ?attr= query param)
+	UnknownAttrError string // error message if ?attr= is unrecognized
 }
 
 // durationDropdown is a single option in the duration <select> dropdown on the
@@ -506,13 +508,33 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "lookup: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		// Check for ?attr= query parameter to select a specific access type
+		defaultAttr := ""
+		unknownAttrError := ""
+		if attrParam := r.URL.Query().Get("attr"); attrParam != "" {
+			found := false
+			for _, at := range li.AccessTypes.Types {
+				if at.Attr == attrParam {
+					found = true
+					defaultAttr = attrParam
+					break
+				}
+			}
+			if !found {
+				unknownAttrError = fmt.Sprintf("Access type %q is either not recognized or not available to you.", attrParam)
+			}
+		}
+
 		rootTemplate.Execute(w, rootData{
-			Who:         li.Who,
-			NodeName:    li.NodeName,
-			AccessTypes: li.AccessTypes.Types,
-			Durations:   li.AccessTypes.DurationOptions(),
-			CSSHash:     cssHash,
-			JSHash:      jsHash,
+			Who:              li.Who,
+			NodeName:         li.NodeName,
+			AccessTypes:      li.AccessTypes.Types,
+			Durations:        li.AccessTypes.DurationOptions(),
+			CSSHash:          cssHash,
+			JSHash:           jsHash,
+			DefaultAttr:      defaultAttr,
+			UnknownAttrError: unknownAttrError,
 		})
 	case "/style.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
