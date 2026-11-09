@@ -263,6 +263,7 @@ type lookupInfo struct {
 			{
 				"Name":    "PII",
 				"Attr":    "custom:jitToPII",
+				"Desc":    "SSH access to nodes with PII data",
 				"Max":     "168h",
 				"Default": "1h",
 			},
@@ -284,6 +285,7 @@ type lookupInfo struct {
 type accessTypeConfig struct {
 	Name    string // e.g. "PII Access" (human readable)
 	Attr    string // e.g. "custom:jitToPII" (posture attribute key)
+	Desc    string // optional description from ACL grant
 	Max     timeDurationString
 	Default timeDurationString
 	Silent  bool // when true, skip Slack notifications for access requests
