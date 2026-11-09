@@ -19,7 +19,7 @@
         <div class="radio-group">
           {{range $index, $access := .AccessTypes}}
           <label class="radio-option">
-            <input type="radio" name="accessType" value="{{$access.Attr}}" {{if eq $index 0}}checked{{end}} required>
+            <input type="radio" name="accessType" value="{{$access.Attr}}" data-max-ms="{{$access.MaxMilliseconds}}" {{if eq $index 0}}checked{{end}} required>
             <span class="radio-custom"></span>
             <div class="radio-content">
               <div class="radio-title">{{$access.Name}}</div>
@@ -41,7 +41,7 @@
         <div class="select-wrapper">
           <select name="duration" id="duration" required>
             {{range .Durations}}
-            <option value="{{.GoStr}}" {{if .Default}}selected{{end}}>{{.Label}}</option>
+            <option value="{{.GoStr}}" data-ms="{{.Milliseconds}}" {{if .Default}}selected{{end}}>{{.Label}}</option>
             {{end}}
           </select>
         </div>
@@ -57,5 +57,6 @@
   {{end}}
 </div>
 
+<script src="/script.js?h={{.JSHash}}"></script>
 </body>
 </html>
